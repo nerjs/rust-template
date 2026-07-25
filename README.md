@@ -35,12 +35,19 @@ make the calls below right after creating the repository.
 - The compiler is not yours anymore: consumers build the crate
   with whatever toolchain they have,
   so green checks on the pinned version say nothing about them.
-  Declare `rust-version` in `Cargo.toml` -
-  current stable at project start is a sane floor.
+  Declare `rust-version` in `Cargo.toml` and keep it minimal:
+  start at the edition floor (1.85 for edition 2024) -
+  every notch above the real minimum cuts off consumer toolchains for nothing.
+  The floor rises only with what the crate actually uses:
+  a language feature (let chains need 1.88), a dependency's MSRV.
   It is not the same number as a toolchain pin:
   the pin may be fresh, MSRV is a promise of a minimum.
-  Gate it with a light job (`cargo hack check --rust-version`),
-  and consider a non-blocking `beta` job as an early warning about the next stable.
+  Do not compute the exact floor in advance -
+  the `msrv` job in `checks.yml` (`cargo hack check --rust-version`)
+  compiles with the declared version
+  and goes red exactly when the floor is understated;
+  raise `rust-version` to the offender then.
+  Consider a non-blocking `beta` job as an early warning about the next stable.
 - The pin itself is questionable here:
   dropping `rust-toolchain.toml` makes CI track the runner's moving stable,
   which is closer to what consumers run.
@@ -55,7 +62,7 @@ make the calls below right after creating the repository.
   `cargo install` fetches the crate from crates.io
   and compiles it on the user's machine with the user's toolchain.
   The compiler story is therefore the library one:
-  declare and gate `rust-version`,
+  keep `rust-version` and the `msrv` job,
   treat the toolchain pin as a CI detail that never reaches users.
 
 ### Binary running in a container
@@ -67,7 +74,8 @@ make the calls below right after creating the repository.
 - This is the shape the template's defaults are built for.
   You control the compiler end to end,
   so keep the `rust-toolchain.toml` pin and bump it deliberately;
-  `rust-version` and a version matrix buy nothing here.
+  `rust-version` and a version matrix buy nothing here -
+  drop the field from `Cargo.toml` and the `msrv` job from `checks.yml`.
 - Update the binary path in `Dockerfile` and mind the runtime-image caveats -
   see [Dockerfile](#dockerfile).
   CI (ubuntu) and the runtime image share glibc,
@@ -110,7 +118,7 @@ it runs the full `ci.yml`.
 | File                     | Trigger                               | Purpose                                        |
 |--------------------------|---------------------------------------|------------------------------------------------|
 | `ci.yml`                 | push/PR on master, manual             | checks -> release build                        |
-| `checks.yml`             | workflow_call                         | fmt + clippy + check + test, reused as a gate  |
+| `checks.yml`             | workflow_call                         | fmt + clippy + check + test + msrv, reused as a gate |
 | `ci-dependencies.yml`    | push/PR on dependencies, manual       | lite CI for dependency bumps: checks, no build |
 | `sync-dependencies.yml`  | push on master, manual                | merge master into the dependencies branch      |
 | `audit.yml`              | weekly cron, manifest changes, manual | `cargo audit` against the RustSec advisory DB  |
@@ -123,7 +131,9 @@ it runs the full `ci.yml`.
 
 `checks.yml` is the shared entry gate.
 It runs `fmt`, `clippy --all-targets --all-features -- -D warnings`, `cargo check --all-features`
-and `cargo test --all-features` on the toolchain from `rust-toolchain.toml`.
+and `cargo test --all-features` on the toolchain from `rust-toolchain.toml`,
+plus an `msrv` job (`cargo hack check --rust-version`)
+that compiles with the toolchain `rust-version` declares rather than the pin.
 `ci.yml` chains the gate, then a release build; `ci-dependencies.yml` runs the gate alone.
 
 Keep `rust-toolchain.toml`: neither the CI jobs nor the Dockerfile carries a toolchain step.
